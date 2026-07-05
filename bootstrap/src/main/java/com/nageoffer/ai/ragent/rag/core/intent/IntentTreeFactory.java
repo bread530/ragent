@@ -246,6 +246,36 @@ public class IntentTreeFactory {
         sales.setChildren(List.of(dingTaskSales));
         roots.add(sales);
 
+        // 联网搜索
+        IntentNode webSearch = IntentNode.builder()
+                .id("web-search")
+                .name("联网搜索")
+                .level(DOMAIN)
+                .kind(IntentKind.MCP)
+                .build();
+
+        IntentNode webSearchGeneral = IntentNode.builder()
+                .id("web-search-general")
+                .name("通用联网搜索")
+                .level(CATEGORY)
+                .parentId(webSearch.getId())
+                .mcpToolId("web_search")
+                .kind(IntentKind.MCP)
+                .promptTemplate(MCP_WEB_SEARCH_PROMPT_TEMPLATE)
+                .paramPromptTemplate(MCP_WEB_SEARCH_PARAMETER_EXTRACT_PROMPT)
+                .description("实时联网搜索获取最新信息，适用于需要查询新闻时事、最新动态、技术前沿、市场价格、政策法规等时效性较强的问题")
+                .examples(List.of(
+                        "今天有什么新闻？",
+                        "最新的AI技术发展有哪些？",
+                        "最近有什么科技大事？",
+                        "查一下今天的天气新闻",
+                        "搜索一下最新的Python版本更新"
+                ))
+                .build();
+
+        webSearch.setChildren(List.of(webSearchGeneral));
+        roots.add(webSearch);
+
         // ========== 4. 系统交互 / 助手说明 ==========
         IntentNode sys = IntentNode.builder()
                 .id("sys")
@@ -450,6 +480,107 @@ public class IntentTreeFactory {
             【动态数据】
             %s
             
+            【用户问题】
+            %s
+            """;
+
+    public static final String MCP_WEB_SEARCH_PARAMETER_EXTRACT_PROMPT = """
+            Hello，你是一个高度专业且严谨的【搜索工具参数提取器】。
+
+            你的唯一任务是：严格按照提供的【工具定义】（Tool Definition）和【参数列表】（Parameters）的约束，从【用户问题】（User Query）中提取所有必要的参数，并以 JSON 格式输出。
+
+            ---
+
+            ### 核心提取逻辑
+
+            1. **查询词提取**：
+               - 从用户问题中提取最核心的搜索关键词，去除语气词（"请帮我"、"我想知道"、"搜索一下"等）。
+               - **禁止**直接照搬整个用户问题作为 query，必须提取为精简的搜索关键词。
+               - 对于中文问题，优先提取名词、专有名词、事件名称等核心词汇。
+               - 示例："最近有什么AI新闻" → query: "AI 新闻 最新"
+               - 示例："Python 3.13 发布了哪些新特性" → query: "Python 3.13 新特性"
+
+            2. **搜索类型判断**：
+               - 如果用户明确提到"新闻"、"最新"、"最近"、"今天"、"昨天"、"动态"等时效性词汇，设置 searchType 为 "news"。
+               - 否则默认为 "general"。
+
+            3. **时间范围推断**：
+               - "今天"、"今天" → "d"
+               - "最近一周"、"本周"、"这周"、"这几天" → "w"
+               - "最近一个月"、"本月"、"这个月" → "m"
+               - "最近一年"、"今年"、"这一年" → "y"
+               - 没有明确时间范围时，不设置 timeRange。
+
+            4. **结果数量**：默认 5 条，如用户明确说"10条"、"多一些"等，相应调整（最多 10 条）。
+
+            ### 通用规则
+            与标准参数提取规则一致（枚举映射、数值转换、默认值处理等）。
+
+            ---
+
+            ### 输入数据与输出格式
+
+            请勿在输出 JSON 对象之外添加任何解释、注释或其他文本。
+
+            #### 【工具定义】
+            <tool_definition>
+            %s
+            </tool_definition>
+
+            #### 【用户问题】
+            <user_query>
+            %s
+            </user_query>
+
+            #### 【输出格式（JSON Object Only）】
+
+            {"param_name_1": value_1, "param_name_2": value_2, ...}
+
+            """;
+
+    private static final String MCP_WEB_SEARCH_PROMPT_TEMPLATE = """
+            Hello，你是一个专业的信息检索与整合助手。系统已通过联网搜索工具获取到了最新的【搜索结果】。
+
+            你的任务是将搜索结果整合成清晰、准确、易读的自然语言回复。
+
+            【核心处理规则】
+            1. **综合提炼**：
+               - 从多条搜索结果中提取关键信息，进行综合提炼和总结，而不是逐条罗列。
+               - 优先采用权威来源（官方网站、知名媒体、学术机构等）的信息。
+               - 如果多条结果观点一致，归纳为一个要点；如果有分歧，客观呈现不同观点。
+
+            2. **直接回答**：
+               - 开门见山，先给出用户问题最直接的答案或核心结论。
+               - 然后展开细节说明。
+               - 不要使用"根据搜索结果"、"搜索显示"这类废话作为开头。
+
+            3. **信息标注**：
+               - 关键事实、数据、日期等标注来源（如"据XX报道"、"XX官网显示"）。
+               - 对于重要的时间、数字、名称等关键信息进行加粗（**Bold**）处理。
+
+            4. **结构化呈现**：
+               - 信息点较多时，使用分点或分段使内容清晰。
+               - 对于对比性、分类性信息，可使用 Markdown 表格呈现。
+               - 每条信息保持简洁，不堆砌无关内容。
+
+            【异常与边界处理】
+            1. **搜索结果为空**：如果搜索结果为空或无相关内容，请告知用户当前未搜索到相关信息，并：
+               - 建议更换更精准的关键词
+               - 建议调整搜索范围
+               - 或者根据自身知识提供可能相关的背景信息
+            2. **结果不相关**：如果搜索结果与用户问题明显不相关，说明搜索未获取到匹配结果，并给出搜索优化建议。
+            3. **信息时效性提醒**：如果搜索结果看起来较旧或来源权威性不足，可以委婉提醒用户"搜索结果仅供参考，建议查阅官方渠道获取最新信息"。
+
+            【禁止事项】
+            - 严禁编造搜索结果中不存在的事实或数据。
+            - 严禁将搜索结果的来源信息（URL等）完全隐藏，关键事实必须可追溯。
+            - 严禁将广告或推广内容作为事实依据。
+
+            {{INTENT_RULES}}
+
+            【搜索结果】
+            %s
+
             【用户问题】
             %s
             """;
